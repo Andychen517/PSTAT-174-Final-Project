@@ -1,0 +1,119 @@
+---
+title: 'R code for S & P 500 data set'
+author: "Andy Chen"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, fig.show='hold', out.width="50%"}
+library(readxl)
+library(ggplot2)
+library(mvdalab)
+library(astsa)
+library(forecast)
+library(tseries)
+library(xts)
+SP500 <- read_excel("S & P 500 2000 - 2015.xlsx")
+## Step 1
+SP500$date <- as.Date(SP500$date)
+SP500_real <- ts(SP500$real, start=c(2000,1), frequency=12)
+
+autoplot(SP500_real) + ggtitle("S&P 500 Real Index (2000-2015)") + ylab("Index Value")
+
+qqnorm(SP500_real, main="QQ Plot of Original S&P 500 Data")
+qqline(SP500_real, col="red")
+
+```
+
+```{r}
+adf_test_result <- adf.test(SP500_real)
+print(adf_test_result)
+
+```
+
+There is a heavy tail in the QQ plot, wo need to do a log or Box Cox power transformation to make data fit
+well.
+
+```{r}
+# Step 2
+sp500_log <- log(SP500_real)
+autoplot(sp500_log) + ggtitle("S&P 500 logged Index (2000-2015)") + ylab("Index Value")
+
+qqnorm(sp500_log, main="QQ Plot of Logged S&P 500 Data")
+qqline(sp500_log, col="purple")
+```
+log transformed model has a better fit after that.
+
+```{r}
+acf(sp500_log, main="ACF of Logged Data")
+```
+
+The ACF is decayed gradually, which means the data need to
+1 difference level(d = 1)
+
+```{r}
+## Step 3
+sp500_log_diff <- diff(sp500_log)
+autoplot(sp500_log_diff) + ggtitle("Log-Differenced S&P 500 Real Index")
+
+par(mfrow=c(1,2))
+acf(sp500_log_diff, main="ACF of Log-Differenced Data")
+pacf(sp500_log_diff, main="PACF of Log-Differenced Data")
+```
+```{r}
+adf_test_result <- adf.test(sp500_log_diff)
+print(adf_test_result)
+```
+
+The ACF and PACF are stationary now.
+```{r}
+## Step 4
+sarima_log_model <- auto.arima(sp500_log_diff, seasonal = FALSE)
+print(summary(sarima_log_model))
+
+# Step 5
+checkresiduals(sarima_log_model)
+```
+
+```{r}
+forecast_values <- forecast(sarima_log_model, h=12)
+autoplot(forecast_values) + ggtitle("Forecast for S&P 500 for next 12 months")
+
+forecast_values
+```
+
+## Neural network
+```{r}
+sp500_nn <-nnetar(sp500_log_diff)
+sp500_nn
+forecasted_values_nn <- forecast(sp500_nn, h=12)
+
+autoplot(forecasted_values_nn) + ggtitle("Forecast for S&P 500 for next 12 months")
+
+forecasted_values_nn
+```
+
+## GARCH
+```{r}
+library(rugarch)
+spec <- ugarchspec(variance.model=list(garchOrder=c(1,1)),mean.model = list(armaOrder = c(0, 0)))
+
+SP500$date <- as.Date(SP500$date)
+sp500_log_diff <- xts(sp500_log_diff, order.by = SP500$date[-1])
+
+garch_fit <- ugarchfit(spec = spec, data = sp500_log_diff[-1])
+garch_fit
+
+forecast <- ugarchforecast(garch_fit, n.ahead = 12)
+
+forecasted_values <- forecast@forecast$seriesFor
+
+plot(forecasted_values, main = "Forecasted SP 500 index Returns", col = "red")
+
+print(forecasted_values)
+```
+
